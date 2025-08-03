@@ -16,7 +16,7 @@ Thumbs.db
 *.log
 
 vendor/
-go.sum
+# go.sum
 
 *.cover
 coverage.*
