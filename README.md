@@ -7,11 +7,9 @@
 ## Features
 
 * Scans either:
-
   * The latest commit (`HEAD`)
   * Staged (uncommitted) changes
 * Detects:
-
   * AWS credentials
   * Generic API keys
   * Private keys
@@ -21,7 +19,13 @@
 
 ## Installation
 
-### Build from Source
+### Option 1: Install from Releases
+
+Download the latest precompiled binary for your platform from the [Releases](https://github.com/s4nj1th/secr-cli/releases) page.
+
+Then make it executable and move it into your `$PATH`. For example:
+
+### Option 2: Build from Source
 
 **Requirements**: Go 1.21+
 
@@ -88,6 +92,5 @@ Open issues or submit pull requests to:
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
-
-Let me know if you want badges (Go version, license, etc.), Docker usage instructions, or packaging steps (e.g., `make`, release automation).
+This project is licensed under the GNU General Public License v3.0.  
+See the [COPYING](./COPYING) file for details.
