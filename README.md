@@ -72,7 +72,7 @@ secr-cli --staged
 You can configure `secr-cli` to automatically scan for secrets before running any Git command. To do this, create a shell alias:
 
 ```bash
-alias git='secr-cli git'
+alias git='secr-cli'
 ```
 
 Add this line to your shell configuration file (`~/.bashrc`, `~/.zshrc`, etc.) to make it persistent.
