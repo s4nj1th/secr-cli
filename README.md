@@ -1,24 +1,9 @@
 <div align="center">
 <h1>secr-cli</h1>
+<p>A lightning-fast secret scanner for Git repositories</p>
 </div>
 
-**`secr-cli`** is a fast and minimal command-line tool written in Go for scanning Git repositories for sensitive information such as API keys, tokens, and private keys. It works on both committed (`HEAD`) and staged changes, and can also act as a wrapper around Git commands to enforce secret scanning before any Git operation.
-
-## Features
-
-* Scans either:
-
-  * The latest commit (`HEAD`)
-  * Staged (uncommitted) changes
-* Detects:
-
-  * AWS credentials
-  * Generic API keys
-  * Private keys
-  * Slack tokens
-* Outputs filename, line number, and rule matched
-* No external dependencies beyond Go standard library
-* Can be used as a Git command wrapper to scan secrets automatically before running any Git command
+**`secr-cli`** is a fast and minimal command-line tool written in Go for scanning Git repositories for sensitive information such as API keys, tokens, and private keys. It works on both committed (`HEAD`), staged changes, unstaged changes, and can also act as a wrapper around Git commands to enforce secret scanning before any Git operation.
 
 ## Installation
 
@@ -37,10 +22,14 @@ sudo mv secr-cli /usr/local/bin/
 
 **Requirements:** Go 1.21+
 
-Clone the repository:
+1. Clone the repository
+2. Build the binary
+3. Move the binary to your `PATH`
 
 ```bash
-make install
+git clone https://github.com/s4nj1th/secr-cli
+cd secr-cli
+sudo make install
 ```
 
 This will compile and copy `secr-cli` to `/usr/local/bin/` (you might need `sudo`).
@@ -58,13 +47,11 @@ secr-cli --help
 Scan the latest commit (`HEAD`):
 
 ```bash
+# Find where the secrets are
 secr-cli
-```
 
-Scan staged (uncommitted) changes:
-
-```bash
-secr-cli --staged
+# Show secret content (careful!)
+secr-cli --show
 ```
 
 ### Using secr-cli as a Git wrapper
@@ -72,7 +59,7 @@ secr-cli --staged
 You can configure `secr-cli` to automatically scan for secrets before running any Git command. To do this, create a shell alias:
 
 ```bash
-alias git='secr-cli'
+alias git='secr-cli && git'
 ```
 
 Add this line to your shell configuration file (`~/.bashrc`, `~/.zshrc`, etc.) to make it persistent.
@@ -89,13 +76,7 @@ If secrets are detected, the Git command is aborted and you will be shown detail
 
 ## Patterns Detected
 
-* AWS Access Key (e.g. `AKIA...`)
-* AWS Secret Key
-* RSA/DSA/EC Private Keys
-* Generic API Keys
-* Slack Tokens
-
-Pattern definitions can be found in [`internal/rules/rules.go`](./internal/rules/rules.go)
+See all patterns in [RULES](RULES.md).
 
 ## Contributing
 
@@ -110,3 +91,7 @@ Open issues or submit pull requests to:
 
 This project is licensed under the GNU General Public License v3.0.
 See the [COPYING](./COPYING) file for details.
+
+## Contributing
+We welcome contributions! Please see [CONTRIBUTING](CONTRIBUTING.md).
+

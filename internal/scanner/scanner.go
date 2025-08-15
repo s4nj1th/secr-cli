@@ -18,33 +18,51 @@ type Finding struct {
 	Line     int
 	Content  string
 	RuleName string
+	Type     string
 }
 
-func ScanRepo(staged bool, ruleSet []rules.Rule) ([]Finding, error) {
+func ScanRepo(ruleSet []rules.Rule) ([]Finding, error) {
 	if err := checkGitRepo(); err != nil {
 		return nil, err
 	}
 
-	if staged {
-		output, err := gitDiff("--cached")
-		if err != nil {
-			return nil, fmt.Errorf("git diff failed: %w", err)
-		}
-		return scanGitDiff(output, ruleSet), nil
-	}
+	var allFindings []Finding
 
-	headCmd := exec.Command("git", "rev-parse", "--verify", "HEAD")
-	if err := headCmd.Run(); err != nil {
-		return scanWorkingDirectory(ruleSet)
-	}
-
-	output, err := gitShow()
+	stagedOutput, err := gitDiff("--cached")
 	if err != nil {
-		return nil, fmt.Errorf("git show failed: %w", err)
+		return nil, fmt.Errorf("git diff (staged) failed: %w", err)
 	}
-	return scanGitDiff(output, ruleSet), nil
-}
+	stagedFindings := scanGitDiff(stagedOutput, ruleSet)
+	for i := range stagedFindings {
+		stagedFindings[i].Type = "staged"
+	}
+	allFindings = append(allFindings, stagedFindings...)
 
+	unstagedOutput, err := gitDiff()
+	if err != nil {
+		return nil, fmt.Errorf("git diff (unstaged) failed: %w", err)
+	}
+
+	unstagedFindings := scanGitDiff(unstagedOutput, ruleSet)
+	for i := range unstagedFindings {
+		unstagedFindings[i].Type = "unstaged"
+	}
+
+	allFindings = append(allFindings, unstagedFindings...)
+
+	workingFindings, err := scanWorkingDirectory(ruleSet)
+	if err != nil {
+		return nil, fmt.Errorf("working directory scan failed: %w", err)
+	}
+
+	for i := range workingFindings {
+		workingFindings[i].Type = "working"
+	}
+
+	allFindings = append(allFindings, workingFindings...)
+
+	return allFindings, nil
+}
 
 func checkGitRepo() error {
 	wd, err := os.Getwd()
