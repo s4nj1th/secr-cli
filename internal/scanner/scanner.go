@@ -4,62 +4,92 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"path/filepath"
 	"os"
-	"io/ioutil"
 	"os/exec"
+	"runtime"
 	"strings"
+	"sync"
 
+	"secr-cli/internal/gitignore"
 	"secr-cli/internal/rules"
 )
 
 type Finding struct {
-	File     string
-	Line     int
-	Content  string
-	RuleName string
-	Type     string
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Content  string `json:"content"`
+	RuleName string `json:"rule"`
+	Severity string `json:"severity"`
+	Type     string `json:"type"`
 }
 
-func ScanRepo(ruleSet []rules.Rule) ([]Finding, error) {
+type ScanOptions struct {
+	StagedOnly  bool
+	NoGitignore bool
+	Workers     int
+}
+
+func ScanRepo(ruleSet []rules.Rule, opts ScanOptions) ([]Finding, error) {
 	if err := checkGitRepo(); err != nil {
 		return nil, err
 	}
 
+	workers := opts.Workers
+	if workers <= 0 {
+		workers = runtime.NumCPU()
+	}
+
 	var allFindings []Finding
+	var mu sync.Mutex
 
-	stagedOutput, err := gitDiff("--cached")
-	if err != nil {
-		return nil, fmt.Errorf("git diff (staged) failed: %w", err)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	var stagedErr error
+	go func() {
+		defer wg.Done()
+		output, err := gitDiff("--cached")
+		if err != nil {
+			stagedErr = fmt.Errorf("git diff (staged) failed: %w", err)
+			return
+		}
+		findings := scanGitDiff(output, ruleSet, "staged")
+		mu.Lock()
+		allFindings = append(allFindings, findings...)
+		mu.Unlock()
+	}()
+
+	if !opts.StagedOnly {
+		wg.Add(1)
+		var unstagedErr error
+		go func() {
+			defer wg.Done()
+			output, err := gitDiff()
+			if err != nil {
+				unstagedErr = fmt.Errorf("git diff (unstaged) failed: %w", err)
+				return
+			}
+			findings := scanGitDiff(output, ruleSet, "unstaged")
+			mu.Lock()
+			allFindings = append(allFindings, findings...)
+			mu.Unlock()
+			_ = unstagedErr
+		}()
 	}
-	stagedFindings := scanGitDiff(stagedOutput, ruleSet)
-	for i := range stagedFindings {
-		stagedFindings[i].Type = "staged"
-	}
-	allFindings = append(allFindings, stagedFindings...)
 
-	unstagedOutput, err := gitDiff()
-	if err != nil {
-		return nil, fmt.Errorf("git diff (unstaged) failed: %w", err)
+	wg.Wait()
+
+	if stagedErr != nil {
+		return nil, stagedErr
 	}
 
-	unstagedFindings := scanGitDiff(unstagedOutput, ruleSet)
-	for i := range unstagedFindings {
-		unstagedFindings[i].Type = "unstaged"
+	if !opts.StagedOnly {
+		workingFindings, err := scanWorkingDirectory(ruleSet, opts.NoGitignore, workers)
+		if err != nil {
+			return nil, fmt.Errorf("working directory scan failed: %w", err)
+		}
+		allFindings = append(allFindings, workingFindings...)
 	}
-
-	allFindings = append(allFindings, unstagedFindings...)
-
-	workingFindings, err := scanWorkingDirectory(ruleSet)
-	if err != nil {
-		return nil, fmt.Errorf("working directory scan failed: %w", err)
-	}
-
-	for i := range workingFindings {
-		workingFindings[i].Type = "working"
-	}
-
-	allFindings = append(allFindings, workingFindings...)
 
 	return allFindings, nil
 }
@@ -79,18 +109,6 @@ func checkGitRepo() error {
 	return nil
 }
 
-func gitShow() ([]byte, error) {
-	cmd := exec.Command("git", "rev-parse", "--verify", "HEAD")
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("no commits to scan (HEAD does not exist)")
-	}
-
-	cmd = exec.Command("git", "show", "HEAD")
-	cmd.Dir, _ = os.Getwd()
-	return cmd.Output()
-}
-
-
 func gitDiff(args ...string) ([]byte, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -101,15 +119,15 @@ func gitDiff(args ...string) ([]byte, error) {
 	return cmd.Output()
 }
 
-func scanGitDiff(diff []byte, rules []rules.Rule) []Finding {
+func scanGitDiff(diff []byte, ruleSet []rules.Rule, diffType string) []Finding {
 	var findings []Finding
 
-	scanner := bufio.NewScanner(bytes.NewReader(diff))
+	sc := bufio.NewScanner(bytes.NewReader(diff))
 	var currentFile string
 	var lineNum int
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	for sc.Scan() {
+		line := sc.Text()
 
 		if strings.HasPrefix(line, "+++ b/") {
 			currentFile = strings.TrimPrefix(line, "+++ b/")
@@ -120,13 +138,15 @@ func scanGitDiff(diff []byte, rules []rules.Rule) []Finding {
 			lineNum++
 			content := line[1:]
 
-			for _, rule := range rules {
+			for _, rule := range ruleSet {
 				if rule.Pattern.MatchString(content) {
 					findings = append(findings, Finding{
 						File:     currentFile,
 						Line:     lineNum,
 						Content:  content,
 						RuleName: rule.Name,
+						Severity: string(rule.Severity),
+						Type:     diffType,
 					})
 				}
 			}
@@ -135,35 +155,101 @@ func scanGitDiff(diff []byte, rules []rules.Rule) []Finding {
 	return findings
 }
 
-func scanWorkingDirectory(ruleSet []rules.Rule) ([]Finding, error) {
-	var findings []Finding
+func scanWorkingDirectory(ruleSet []rules.Rule, noGitignore bool, workers int) ([]Finding, error) {
+	var files []string
+	var err error
 
-	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
+	if noGitignore {
+		files, err = gitignore.AllFiles()
+	} else {
+		files, err = gitignore.TrackedFiles()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to list files: %w", err)
+	}
 
-		content, err := ioutil.ReadFile(path)
-		if err != nil {
-			return nil
-		}
+	fileCh := make(chan string, len(files))
+	findingCh := make(chan []Finding, len(files))
 
-		lines := strings.Split(string(content), "\n")
-		for i, line := range lines {
-			for _, rule := range ruleSet {
-				if rule.Pattern.MatchString(line) {
-					findings = append(findings, Finding{
-						File:     path,
-						Line:     i + 1,
-						Content:  line,
-						RuleName: rule.Name,
-					})
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range fileCh {
+				results := scanFile(path, ruleSet)
+				if len(results) > 0 {
+					findingCh <- results
 				}
 			}
-		}
-		return nil
-	})
+		}()
+	}
 
-	return findings, err
+	for _, f := range files {
+		fileCh <- f
+	}
+	close(fileCh)
+
+	go func() {
+		wg.Wait()
+		close(findingCh)
+	}()
+
+	var allFindings []Finding
+	for batch := range findingCh {
+		allFindings = append(allFindings, batch...)
+	}
+
+	return allFindings, nil
 }
 
+func scanFile(path string, ruleSet []rules.Rule) []Finding {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	buf := make([]byte, 512)
+	n, err := f.Read(buf)
+	if err != nil || isBinary(buf[:n]) {
+		return nil
+	}
+
+	if _, err := f.Seek(0, 0); err != nil {
+		return nil
+	}
+
+	var findings []Finding
+	sc := bufio.NewScanner(f)
+	lineNum := 0
+
+	for sc.Scan() {
+		lineNum++
+		line := sc.Text()
+
+		for _, rule := range ruleSet {
+			if rule.Pattern.MatchString(line) {
+				findings = append(findings, Finding{
+					File:     path,
+					Line:     lineNum,
+					Content:  line,
+					RuleName: rule.Name,
+					Severity: string(rule.Severity),
+					Type:     "working",
+				})
+			}
+		}
+	}
+
+	return findings
+}
+
+func isBinary(data []byte) bool {
+	for _, b := range data {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
+}

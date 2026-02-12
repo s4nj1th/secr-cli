@@ -3,15 +3,23 @@
 <p>A lightning-fast secret scanner for Git repositories</p>
 </div>
 
-**`secr-cli`** is a fast and minimal command-line tool written in Go for scanning Git repositories for sensitive information such as API keys, tokens, and private keys. It works on both committed (`HEAD`), staged changes, unstaged changes, and can also act as a wrapper around Git commands to enforce secret scanning before any Git operation.
+**`secr-cli`** is a fast and minimal command-line tool written in Go for scanning Git repositories for sensitive information such as API keys, tokens, and private keys. It uses **goroutine-based concurrent scanning** and respects `.gitignore` rules out of the box.
+
+## Features
+
+- **40+ detection rules** for API keys, tokens, credentials, and secrets
+- **Severity levels** (HIGH / MEDIUM / LOW) for all rules
+- **`.gitignore`-aware** — automatically skips ignored files
+- **Concurrent scanning** — goroutine worker pool for fast file scanning
+- **Git integration** — pre-commit hook management and git command passthrough
+- **JSON output** — machine-readable output for CI/CD pipelines
+- **Staged-only mode** — scan only what you're about to commit
 
 ## Installation
 
 ### Option 1: Install from Releases
 
 Download the latest precompiled binary for your platform from the [Releases](https://github.com/s4nj1th/secr-cli/releases) page.
-
-Make it executable and move it into your `$PATH`. For example:
 
 ```bash
 chmod +x secr-cli
@@ -22,19 +30,13 @@ sudo mv secr-cli /usr/local/bin/
 
 **Requirements:** Go 1.21+
 
-1. Clone the repository
-2. Build the binary
-3. Move the binary to your `PATH`
-
 ```bash
 git clone https://github.com/s4nj1th/secr-cli
 cd secr-cli
 sudo make install
 ```
 
-This will compile and copy `secr-cli` to `/usr/local/bin/` (you might need `sudo`).
-
-Verify the build:
+Verify:
 
 ```bash
 secr-cli --help
@@ -42,56 +44,102 @@ secr-cli --help
 
 ## Usage
 
-### Basic secret scan commands
-
-Scan the latest commit (`HEAD`):
+### Quick Scan
 
 ```bash
-# Find where the secrets are
+# Scan the repo (staged + unstaged + working directory)
 secr-cli
 
 # Show secret content (careful!)
 secr-cli --show
 ```
 
-### Using secr-cli as a Git wrapper
-
-You can configure `secr-cli` to automatically scan for secrets before running any Git command. To do this, create a shell alias:
+### Scan Subcommand
 
 ```bash
-alias git='secr-cli && git'
+# Scan only staged changes (great for pre-commit)
+secr-cli scan --staged-only
+
+# Output as JSON (for CI/CD)
+secr-cli scan --json
+
+# Filter by severity
+secr-cli scan --severity HIGH
+
+# Scan everything, ignore .gitignore rules
+secr-cli scan --no-gitignore
+
+# Control concurrency
+secr-cli scan --workers 8
 ```
 
-Add this line to your shell configuration file (`~/.bashrc`, `~/.zshrc`, etc.) to make it persistent.
+### Pre-Commit Hook
 
-After this, when you run any `git` command, for example:
+Install a Git pre-commit hook that automatically scans for secrets:
 
 ```bash
-git commit -m "fix typo"
+# Install the hook
+secr-cli hook install
+
+# Remove the hook
+secr-cli hook uninstall
 ```
 
-`secr-cli` will first scan for secrets in the repository (HEAD or staged, depending on flags), and if none are found, it will forward the command to the actual Git binary.
+After installation, every `git commit` will automatically scan staged changes first.
 
-If secrets are detected, the Git command is aborted and you will be shown details about the secrets found along with remediation steps.
+### Git Passthrough
+
+Run any Git command with an automatic secret scan:
+
+```bash
+secr-cli git commit -m "my changes"
+secr-cli git push origin main
+secr-cli git merge feature-branch
+```
+
+If secrets are detected, the Git command is aborted.
+
+### Other Commands
+
+```bash
+# List all detection rules with severity
+secr-cli rules
+
+# Show scan status summary
+secr-cli status
+
+# Print version
+secr-cli version
+```
+
+### Shell Alias (Optional)
+
+You can also alias `git` to always scan first:
+
+```bash
+alias git='secr-cli git'
+```
+
+Add to your shell config (`~/.bashrc`, `~/.zshrc`) to make it persistent.
 
 ## Patterns Detected
 
-See all patterns in [RULES](RULES.md).
+See all patterns in [RULES](RULES.md), or run `secr-cli rules` to list them in terminal.
+
+**Categories:** Cloud Credentials, API Tokens, Cryptographic Material, Database Credentials, Authentication, Payment Information, Generic Patterns.
 
 ## Contributing
 
+We welcome contributions! Please see [CONTRIBUTING](CONTRIBUTING.md).
+
 Open issues or submit pull requests to:
 
-* Add more detection rules
-* Improve CLI usability
-* Add `.gitignore` support
-* Support JSON or SARIF output
+- Add more detection rules
+- Improve CLI usability
+- Support SARIF output
+- Add custom rule configuration
 
 ## License
 
 This project is licensed under the GNU General Public License v3.0.
 See the [COPYING](./COPYING) file for details.
-
-## Contributing
-We welcome contributions! Please see [CONTRIBUTING](CONTRIBUTING.md).
-
